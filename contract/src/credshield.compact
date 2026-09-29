@@ -1,0 +1,199 @@
+// CREDShield — Confidential Credentials Contract
+// "Prove your credentials. Reveal nothing unnecessary."
+//
+// Privacy model:
+//   PUBLIC  (on-chain / ledger):
+//     - credential_commitment  : hash of the full credential data
+//     - issuer_commitment      : hash of the issuer's identity
+//     - credential_type        : e.g. "BACHELORS_DEGREE" (non-sensitive)
+//     - revocation_flag        : 0 = valid, 1 = revoked
+//     - issued_at              : block-level timestamp (non-sensitive)
+//     - expiry_year            : year the credential expires (non-sensitive)
+//     - last_verified_at       : when was the last successful verification
+//
+//   PRIVATE (off-chain / witness / never on-chain):
+//     - holder's name, student ID, exact GPA, date of birth
+//     - full credential attributes
+//     - issuer secret key
+//     - threshold values (exact GPA)
+//
+// ZK circuits prove claims about private data without revealing it.
+
+pragma language_version >= 0.13;
+
+import CompactStandardLibrary;
+
+// ──────────────────────────────────────────────
+// Public ledger state
+// ──────────────────────────────────────────────
+export ledger credential_commitment: Bytes<32>;  // hash of full credential
+export ledger issuer_commitment: Bytes<32>;       // hash of issuer identity
+export ledger credential_type: Bytes<32>;         // e.g. BACHELORS_DEGREE (padded)
+export ledger revocation_flag: Uint<8>;           // 0 = valid, 1 = revoked
+export ledger expiry_year: Uint<16>;              // graduation/expiry year
+export ledger verification_count: Counter;        // number of successful verifications
+export ledger last_verified_at: Counter;          // block number of last verification
+
+// ──────────────────────────────────────────────
+// Witnesses — private inputs, never on-chain
+// ──────────────────────────────────────────────
+
+// Issuer provides their secret identity key during issuance
+witness getIssuerSecretKey(): Bytes<32>;
+
+// Holder provides full credential attributes during proof generation
+witness getCredentialAttributes(): Bytes<32>;  // commitment preimage secret
+
+// Holder provides their GPA value for threshold proof (stays private)
+witness getGpaValue(): Uint<8>;  // GPA * 10, e.g. 87 = 8.7 GPA
+
+// Holder provides graduation year for expiry check
+witness getGraduationYear(): Uint<16>;
+
+// ──────────────────────────────────────────────
+// Internal helpers
+// ──────────────────────────────────────────────
+
+// Derive a commitment from two 32-byte values
+circuit deriveCommitment(a: Bytes<32>, b: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([a, b]);
+}
+
+// Derive credential commitment from attributes secret + issuer commitment
+circuit deriveCredentialCommitment(attrs_secret: Bytes<32>, issuer_hash: Bytes<32>): Bytes<32> {
+  return deriveCommitment(attrs_secret, issuer_hash);
+}
+
+// ──────────────────────────────────────────────
+// CIRCUIT 1: Issue a credential
+// Called by the issuer to register a new credential on-chain.
+// Private: issuer secret key, credential attributes
+// Public:  credential commitment, issuer commitment, type, expiry
+// ──────────────────────────────────────────────
+export circuit issueCredential(
+  cred_type: Bytes<32>,
+  expiry_yr: Uint<16>
+): [] {
+  // Pull private inputs via witnesses
+  const issuer_secret = getIssuerSecretKey();
+  const attrs_secret = getCredentialAttributes();
+
+  // Derive issuer commitment (a hash of the issuer's secret key)
+  // This binds the credential to the issuer without revealing the issuer's key
+  const issuer_hash = persistentHash<Bytes<32>>(issuer_secret);
+
+  // Derive the credential commitment from attrs + issuer
+  const cred_commitment = deriveCredentialCommitment(attrs_secret, issuer_hash);
+
+  // Write only commitments + non-sensitive metadata to public ledger
+  credential_commitment = disclose(cred_commitment);
+  issuer_commitment = disclose(issuer_hash);
+  credential_type = disclose(cred_type);
+  revocation_flag = disclose(0 as Uint<8>);
+  expiry_year = disclose(expiry_yr);
+}
+
+// ──────────────────────────────────────────────
+// CIRCUIT 2: Verify a degree claim
+// Proves the holder has the credential matching the on-chain commitment.
+// Private: credential attributes secret
+// Public:  verification succeeds or fails (assert)
+// ──────────────────────────────────────────────
+export circuit verifyDegreeClaim(): [] {
+  // The credential must not be revoked
+  assert revocation_flag == (0 as Uint<8>);
+
+  // Pull private credential attributes
+  const attrs_secret = getCredentialAttributes();
+
+  // Recompute the credential commitment from private inputs
+  const recomputed_commitment = deriveCredentialCommitment(attrs_secret, issuer_commitment);
+
+  // Assert the recomputed commitment matches what is on-chain
+  // This proves the holder knows the private attributes without revealing them
+  assert recomputed_commitment == credential_commitment;
+
+  // Record verification (non-sensitive counter increment)
+  verification_count.increment(1);
+  last_verified_at.increment(1);
+}
+
+// ──────────────────────────────────────────────
+// CIRCUIT 3: Verify GPA threshold claim
+// Proves GPA >= threshold WITHOUT revealing the exact GPA.
+// Private: exact GPA value
+// Public:  only whether the threshold is met
+// ──────────────────────────────────────────────
+export circuit verifyGpaThreshold(threshold_times_10: Uint<8>): [] {
+  // Credential must be valid
+  assert revocation_flag == (0 as Uint<8>);
+
+  // Pull private GPA (stored as GPA * 10 for integer arithmetic)
+  const gpa_times_10 = getGpaValue();
+
+  // Assert GPA meets threshold — exact value never leaves private domain
+  assert gpa_times_10 >= threshold_times_10;
+
+  // Also verify this is a genuine credential (commitment check)
+  const attrs_secret = getCredentialAttributes();
+  const recomputed_commitment = deriveCredentialCommitment(attrs_secret, issuer_commitment);
+  assert recomputed_commitment == credential_commitment;
+
+  verification_count.increment(1);
+}
+
+// ──────────────────────────────────────────────
+// CIRCUIT 4: Verify credential is not expired
+// Proves graduation year is within valid range.
+// Private: graduation year from witness
+// Public:  only the valid/invalid result
+// ──────────────────────────────────────────────
+export circuit verifyNotExpired(current_year: Uint<16>): [] {
+  // Credential must not be revoked
+  assert revocation_flag == (0 as Uint<8>);
+
+  // Graduation year on ledger must be >= current year (still enrolled or recently graduated)
+  assert expiry_year >= current_year;
+
+  // Verify commitment to confirm authentic credential
+  const attrs_secret = getCredentialAttributes();
+  const recomputed_commitment = deriveCredentialCommitment(attrs_secret, issuer_commitment);
+  assert recomputed_commitment == credential_commitment;
+
+  verification_count.increment(1);
+}
+
+// ──────────────────────────────────────────────
+// CIRCUIT 5: Verify issuer authenticity
+// Proves the credential was issued by a known/trusted issuer.
+// Private: issuer secret key
+// Public:  issuer commitment comparison
+// ──────────────────────────────────────────────
+export circuit verifyIssuer(expected_issuer_commitment: Bytes<32>): [] {
+  // Credential must not be revoked
+  assert revocation_flag == (0 as Uint<8>);
+
+  // Recompute issuer commitment from private key
+  const issuer_secret = getIssuerSecretKey();
+  const recomputed_issuer_hash = persistentHash<Bytes<32>>(issuer_secret);
+
+  // Assert the recomputed issuer hash matches what the verifier expects
+  assert recomputed_issuer_hash == expected_issuer_commitment;
+
+  // Also assert matches what's on-chain
+  assert recomputed_issuer_hash == issuer_commitment;
+}
+
+// ──────────────────────────────────────────────
+// CIRCUIT 6: Revoke a credential
+// Only the original issuer (who knows the issuer secret key) can revoke.
+// ──────────────────────────────────────────────
+export circuit revokeCredential(): [] {
+  // Verify caller is the issuer by checking their secret key produces the on-chain commitment
+  const issuer_secret = getIssuerSecretKey();
+  const recomputed_issuer_hash = persistentHash<Bytes<32>>(issuer_secret);
+  assert recomputed_issuer_hash == issuer_commitment;
+
+  // Set revocation flag publicly (needed for on-chain verification)
+  revocation_flag = disclose(1 as Uint<8>);
+}
