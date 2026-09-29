@@ -1,0 +1,37 @@
+node_modules/
+.next/
+dist/
+build/
+contract/src/managed/
+*.env
+.env.local
+.env.production
+
+# Compact compiler output (committed for CI reproducibility in some setups)
+# Uncomment the line below to ignore generated artifacts
+# contract/src/managed/
+
+# ZK keys (large binaries — usually gitignored in production)
+*.prover
+*.verifier
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# Coverage
+coverage/
+.nyc_output/
+
+# TypeScript build cache
+*.tsbuildinfo
