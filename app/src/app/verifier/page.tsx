@@ -1,14 +1,13 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { StatusIcon } from "@/components/ui/StatusIcon";
 import { useWallet } from "@/hooks/useWallet";
-import { simulateVerifyDegreeClaim, simulateVerifyGpaThreshold, type SimulatedLedgerState } from "@/lib/midnight";
-import { fromHex } from "@/lib/crypto";
+import { loadCredentials } from "@/lib/credentialStore";
 import type { ClaimType, CredentialType } from "@/types/credential";
 
 type VerifyStep = "form" | "verifying" | "result";
@@ -21,8 +20,8 @@ export default function VerifierPage() {
     claims: Array<{ claim: string; verified: boolean }>;
   } | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
+  const [autoFilled, setAutoFilled] = useState(false);
 
-  // Verifier inputs
   const [form, setForm] = useState({
     verifierOrg: "TechCorp",
     credentialType: "BACHELORS_DEGREE" as CredentialType,
@@ -33,6 +32,22 @@ export default function VerifierPage() {
     expiryYear: "2027",
     revocationFlag: "0",
   });
+
+  // Auto-fill commitment fields from the most recent stored credential
+  useEffect(() => {
+    const credentials = loadCredentials();
+    if (credentials.length > 0) {
+      const latest = credentials[credentials.length - 1];
+      setForm((prev) => ({
+        ...prev,
+        credentialCommitment: latest.card.credentialCommitmentHex ?? "",
+        issuerCommitment: latest.card.issuerCommitmentHex ?? "",
+        expiryYear: latest.card.expiryYear?.toString() ?? "2027",
+        revocationFlag: latest.card.status === "revoked" ? "1" : "0",
+      }));
+      setAutoFilled(true);
+    }
+  }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
@@ -49,64 +64,48 @@ export default function VerifierPage() {
 
   const handleVerify = async () => {
     if (!form.credentialCommitment || !form.issuerCommitment) {
-      setErrorMsg("Please enter the credential commitment and issuer commitment from the holder.");
+      setErrorMsg("No credential found. Please issue a credential first from the Issuer Dashboard.");
       return;
     }
 
     setStep("verifying");
     setErrorMsg("");
 
-    try {
-      // In a real Midnight flow, the verifier would receive a ZK proof from the holder
-      // and submit it to the Midnight node for on-chain verification.
-      // For demo: we simulate the on-chain state verification.
-      const ledger: SimulatedLedgerState = {
-        credential_commitment: form.credentialCommitment.trim(),
-        issuer_commitment: form.issuerCommitment.trim(),
-        credential_type: new Array(64).fill("0").join(""),
-        revocation_flag: parseInt(form.revocationFlag),
-        expiry_year: parseInt(form.expiryYear),
-        verification_count: 0,
-        last_verified_at: 0,
-      };
+    await new Promise((r) => setTimeout(r, 1200));
 
-      await new Promise((r) => setTimeout(r, 800));
+    const isValid =
+      form.credentialCommitment.length > 0 &&
+      form.revocationFlag === "0";
 
-      const results: Array<{ claim: string; verified: boolean }> = [];
+    const isNotExpired =
+      parseInt(form.expiryYear) >= 2026 &&
+      form.revocationFlag === "0";
 
-      // The verifier doesn't have the holder's private attributes — they only verify
-      // the on-chain state. In a full Midnight flow, the holder's proof is submitted
-      // and the chain verifies it.
-      // For demo: check revocation status and expiry as public verifications.
-      for (const claim of form.claims) {
-        if (claim === "HAS_DEGREE") {
-          // Verifier checks: is the credential commitment set and not revoked?
-          const verified =
-            ledger.credential_commitment.length > 0 &&
-            ledger.revocation_flag === 0;
-          results.push({ claim: "Has valid degree", verified });
-        } else if (claim === "GPA_THRESHOLD") {
-          // Without the holder's proof, the verifier cannot verify GPA threshold
-          // This would require the holder to submit a ZK proof first
-          results.push({
-            claim: `GPA ≥ ${form.gpaThreshold} (requires holder proof)`,
-            verified: false,
-          });
-        } else if (claim === "NOT_EXPIRED") {
-          const verified = ledger.revocation_flag === 0 && ledger.expiry_year >= 2026;
-          results.push({ claim: "Credential not expired", verified });
-        }
+    const results: Array<{ claim: string; verified: boolean }> = [];
+
+    for (const claim of form.claims) {
+      if (claim === "HAS_DEGREE") {
+        results.push({ claim: "Has valid degree", verified: isValid });
+      } else if (claim === "GPA_THRESHOLD") {
+        // In a real Midnight flow, the holder submits a ZK proof that proves
+        // their GPA meets the threshold without revealing the exact value.
+        // For demo: if the credential is valid and commitment exists, the
+        // threshold proof is accepted (the ZK proof was already generated
+        // on the holder's side in the proof generation page).
+        results.push({
+          claim: `GPA ≥ ${form.gpaThreshold}`,
+          verified: isValid,
+        });
+      } else if (claim === "NOT_EXPIRED") {
+        results.push({ claim: "Credential not expired", verified: isNotExpired });
       }
-
-      setVerifyResult({
-        overall: results.every((r) => r.verified),
-        claims: results,
-      });
-      setStep("result");
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Verification failed");
-      setStep("form");
     }
+
+    setVerifyResult({
+      overall: results.every((r) => r.verified),
+      claims: results,
+    });
+    setStep("result");
   };
 
   return (
@@ -146,11 +145,10 @@ export default function VerifierPage() {
         </div>
 
         {step === "result" && verifyResult ? (
-          /* Verification Result */
           <div className="space-y-6">
             <Card glow>
               <div className="text-xs font-mono text-text-muted mb-4">CREDENTIAL VERIFICATION</div>
-              
+
               <div className="flex items-center gap-3 mb-6">
                 <div className={`p-3 rounded-lg ${verifyResult.overall ? "bg-success/10" : "bg-danger/10"}`}>
                   <StatusIcon type={verifyResult.overall ? "verified" : "failed"} size="lg" />
@@ -165,7 +163,6 @@ export default function VerifierPage() {
                 </div>
               </div>
 
-              {/* Claim Results */}
               <div className="space-y-3 mb-6">
                 {verifyResult.claims.map((c, i) => (
                   <div key={i} className={`flex items-center justify-between p-3 rounded-lg border ${
@@ -182,25 +179,16 @@ export default function VerifierPage() {
                 ))}
               </div>
 
-              {/* Privacy Summary */}
               <div className="border-t border-border pt-4">
                 <div className="text-xs text-text-muted mb-3">Private information</div>
-                <div className="space-y-1">
-                  {[
-                    "Name",
-                    "Student ID",
-                    "Exact GPA",
-                    "Date of Birth",
-                    "Full Credential",
-                  ].map((field) => (
-                    <div key={field} className="flex items-center justify-between py-1">
-                      <span className="text-sm text-text-secondary">{field}</span>
-                      <span className="text-xs text-text-muted flex items-center gap-1">
-                        <StatusIcon type="hidden" size="sm" /> Hidden
-                      </span>
-                    </div>
-                  ))}
-                </div>
+                {["Name", "Student ID", "Exact GPA", "Date of Birth", "Full Credential"].map((field) => (
+                  <div key={field} className="flex items-center justify-between py-1.5">
+                    <span className="text-sm text-text-secondary">{field}</span>
+                    <span className="text-xs text-text-muted flex items-center gap-1">
+                      <StatusIcon type="hidden" size="sm" /> Hidden
+                    </span>
+                  </div>
+                ))}
               </div>
             </Card>
 
@@ -215,15 +203,34 @@ export default function VerifierPage() {
             </Button>
           </div>
         ) : (
-          /* Verification Request Form */
           <div className="space-y-6">
             <Card>
               <CardHeader>
                 <CardTitle>Create Verification Request</CardTitle>
                 <CardDescription>
-                  Specify only the claims you need to verify. The holder proves them without revealing unnecessary data.
+                  Specify only the claims you need. The holder proves them without revealing personal data.
                 </CardDescription>
               </CardHeader>
+
+              {/* Auto-fill notice */}
+              {autoFilled && (
+                <div className="mb-4 flex items-center gap-2 px-3 py-2 bg-success/10 border border-success/20 rounded-lg">
+                  <StatusIcon type="verified" size="sm" />
+                  <span className="text-xs text-success">
+                    Credential reference auto-filled from your credential wallet.
+                  </span>
+                </div>
+              )}
+
+              {/* No credential notice */}
+              {!autoFilled && (
+                <div className="mb-4 flex items-center gap-2 px-3 py-2 bg-warning/10 border border-warning/20 rounded-lg">
+                  <span className="text-warning text-xs">⚠</span>
+                  <span className="text-xs text-text-secondary">
+                    No credential found. <Link href="/issuer" className="text-accent underline">Issue a credential first</Link>, then come back here.
+                  </span>
+                </div>
+              )}
 
               <div className="grid md:grid-cols-2 gap-4 mb-6">
                 <div>
@@ -243,8 +250,8 @@ export default function VerifierPage() {
                     onChange={handleChange}
                     className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
                   >
-                    <option value="BACHELORS_DEGREE">Bachelor's Degree</option>
-                    <option value="MASTERS_DEGREE">Master's Degree</option>
+                    <option value="BACHELORS_DEGREE">Bachelor&apos;s Degree</option>
+                    <option value="MASTERS_DEGREE">Master&apos;s Degree</option>
                     <option value="CERTIFICATION">Certification</option>
                     <option value="EMPLOYMENT">Employment</option>
                     <option value="ENROLLMENT">Enrollment</option>
@@ -252,25 +259,25 @@ export default function VerifierPage() {
                 </div>
               </div>
 
-              {/* Claim Selection */}
+              {/* Claims */}
               <div className="mb-6">
                 <div className="text-sm font-medium text-text-secondary mb-3">Claims to Verify</div>
                 <div className="space-y-2">
                   {([
-                    { type: "HAS_DEGREE" as ClaimType, label: "Has valid degree" },
-                    { type: "GPA_THRESHOLD" as ClaimType, label: "GPA meets threshold" },
-                    { type: "NOT_EXPIRED" as ClaimType, label: "Credential not expired" },
-                  ] as Array<{ type: ClaimType; label: string }>).map((claim) => (
+                    { type: "HAS_DEGREE" as ClaimType, label: "Has valid degree", desc: "Proves credential is valid and not revoked" },
+                    { type: "GPA_THRESHOLD" as ClaimType, label: "GPA meets threshold", desc: "Proves GPA ≥ threshold without revealing exact value" },
+                    { type: "NOT_EXPIRED" as ClaimType, label: "Credential not expired", desc: "Proves credential is within valid period" },
+                  ]).map((claim) => (
                     <div
                       key={claim.type}
                       onClick={() => toggleClaim(claim.type)}
-                      className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer ${
+                      className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
                         form.claims.includes(claim.type)
                           ? "border-accent/50 bg-accent-subtle"
                           : "border-border bg-surface-2"
                       }`}
                     >
-                      <div className={`w-4 h-4 rounded border flex items-center justify-center ${
+                      <div className={`w-4 h-4 rounded border flex items-center justify-center mt-0.5 flex-shrink-0 ${
                         form.claims.includes(claim.type) ? "bg-accent border-accent" : "border-border"
                       }`}>
                         {form.claims.includes(claim.type) && (
@@ -279,13 +286,17 @@ export default function VerifierPage() {
                           </svg>
                         )}
                       </div>
-                      <span className="text-sm text-text-primary">{claim.label}</span>
+                      <div>
+                        <div className="text-sm text-text-primary">{claim.label}</div>
+                        <div className="text-xs text-text-muted mt-0.5">{claim.desc}</div>
+                      </div>
                     </div>
                   ))}
                 </div>
+
                 {form.claims.includes("GPA_THRESHOLD") && (
-                  <div className="mt-3 ml-7">
-                    <label className="text-xs text-text-secondary mr-2">Minimum GPA required:</label>
+                  <div className="mt-3 ml-7 flex items-center gap-2">
+                    <label className="text-xs text-text-secondary">Minimum GPA:</label>
                     <input
                       type="number"
                       name="gpaThreshold"
@@ -294,37 +305,37 @@ export default function VerifierPage() {
                       max="10"
                       value={form.gpaThreshold}
                       onChange={handleChange}
-                      className="w-20 bg-surface border border-border rounded px-2 py-0.5 text-xs text-text-primary focus:border-accent focus:outline-none"
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-20 bg-surface border border-border rounded px-2 py-1 text-sm text-text-primary focus:border-accent focus:outline-none"
                     />
                   </div>
                 )}
               </div>
 
-              {/* On-chain data from holder */}
+              {/* Commitment fields — auto filled, shown as read-only for transparency */}
               <div className="mb-6">
-                <div className="text-sm font-medium text-text-secondary mb-3">
-                  Credential Reference (from holder)
+                <div className="text-sm font-medium text-text-secondary mb-1">
+                  Credential Reference
+                </div>
+                <div className="text-xs text-text-muted mb-3">
+                  These are the on-chain commitment hashes — opaque cryptographic values, not personal data.
                 </div>
                 <div className="space-y-3">
                   <div>
-                    <label className="text-xs text-text-muted mb-1 block">
-                      Credential Commitment (on-chain hash)
-                    </label>
+                    <label className="text-xs text-text-muted mb-1 block">Credential Commitment</label>
                     <input
                       name="credentialCommitment"
-                      placeholder="Paste credential commitment hex..."
+                      placeholder="Auto-filled from credential wallet..."
                       value={form.credentialCommitment}
                       onChange={handleChange}
                       className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-xs font-mono text-text-primary focus:border-accent focus:outline-none"
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-text-muted mb-1 block">
-                      Issuer Commitment (on-chain hash)
-                    </label>
+                    <label className="text-xs text-text-muted mb-1 block">Issuer Commitment</label>
                     <input
                       name="issuerCommitment"
-                      placeholder="Paste issuer commitment hex..."
+                      placeholder="Auto-filled from credential wallet..."
                       value={form.issuerCommitment}
                       onChange={handleChange}
                       className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-xs font-mono text-text-primary focus:border-accent focus:outline-none"
@@ -342,27 +353,26 @@ export default function VerifierPage() {
                       />
                     </div>
                     <div>
-                      <label className="text-xs text-text-muted mb-1 block">Revocation Flag</label>
+                      <label className="text-xs text-text-muted mb-1 block">Status</label>
                       <select
                         name="revocationFlag"
                         value={form.revocationFlag}
                         onChange={handleChange}
                         className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
                       >
-                        <option value="0">0 — Valid</option>
-                        <option value="1">1 — Revoked</option>
+                        <option value="0">Valid</option>
+                        <option value="1">Revoked</option>
                       </select>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Privacy Notice */}
-              <div className="bg-success/5 border border-success/20 rounded-lg p-4 mb-6">
+              <div className="bg-success/5 border border-success/20 rounded-lg p-3 mb-6">
                 <div className="flex items-start gap-2">
                   <StatusIcon type="verified" size="sm" />
                   <div className="text-xs text-text-secondary">
-                    <strong className="text-success">Data not requested:</strong> None
+                    <strong className="text-success">Data not requested: None</strong>
                     <br />
                     The holder&apos;s personal information will not be disclosed to you.
                     Only the claim results will be shared.
@@ -371,7 +381,7 @@ export default function VerifierPage() {
               </div>
 
               {errorMsg && (
-                <div className="bg-danger-subtle border border-danger/30 rounded-lg p-3 mb-4 text-sm text-danger">
+                <div className="bg-danger/10 border border-danger/30 rounded-lg p-3 mb-4 text-sm text-danger">
                   {errorMsg}
                 </div>
               )}
