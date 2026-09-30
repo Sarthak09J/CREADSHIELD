@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -11,6 +11,7 @@ export default function LandingPage() {
 
   return (
     <div className="min-h-screen bg-background" style={{ background: "radial-gradient(ellipse at 50% 0%, #1e1035 0%, #0a0a0f 60%)" }}>
+
       {/* Nav */}
       <nav className="border-b border-border/50 px-6 py-4">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
@@ -20,6 +21,7 @@ export default function LandingPage() {
             </svg>
             <span className="font-semibold text-lg text-text-primary">CREDShield</span>
           </div>
+
           <div className="flex items-center gap-3">
             <Link href="/dashboard" className="text-sm text-text-secondary hover:text-text-primary transition-colors">
               Dashboard
@@ -27,16 +29,22 @@ export default function LandingPage() {
             <Link href="/verifier" className="text-sm text-text-secondary hover:text-text-primary transition-colors">
               Verify
             </Link>
+
             {wallet.status === "connected" ? (
               <div className="flex items-center gap-2 px-3 py-1.5 bg-success/10 border border-success/30 rounded-lg">
-                <span className="w-2 h-2 bg-success rounded-full animate-pulse-slow" />
+                <span className="w-2 h-2 bg-success rounded-full" />
                 <span className="text-xs text-success font-medium">
-                  {wallet.address?.slice(0, 12)}...
+                  {wallet.address?.slice(0, 14)}...
                 </span>
               </div>
             ) : (
-              <Button size="sm" onClick={connect} loading={wallet.status === "connecting"}>
-                Connect Wallet
+              <Button
+                size="sm"
+                onClick={connect}
+                loading={wallet.status === "connecting"}
+                variant="secondary"
+              >
+                {wallet.status === "connecting" ? "Connecting..." : "Connect Wallet"}
               </Button>
             )}
           </div>
@@ -62,24 +70,24 @@ export default function LandingPage() {
             powered by Midnight. The verifier sees only what they need — nothing more.
           </p>
 
+          {/* wallet error message */}
+          {wallet.status === "error" && (
+            <div className="mb-6 mx-auto max-w-md bg-danger/10 border border-danger/30 rounded-lg px-4 py-3 text-sm text-danger">
+              {wallet.error}
+            </div>
+          )}
+
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            {wallet.status === "connected" ? (
-              <Link href="/dashboard">
-                <Button size="lg">
-                  Open Dashboard
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                  </svg>
-                </Button>
-              </Link>
-            ) : (
-              <Button size="lg" onClick={connect} loading={wallet.status === "connecting"}>
-                {wallet.status === "connecting" ? "Connecting..." : "Get Started"}
+            {/* Get Started always goes to dashboard — no wallet gate */}
+            <Link href="/dashboard">
+              <Button size="lg">
+                Get Started
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
                 </svg>
               </Button>
-            )}
+            </Link>
+
             <Link href="/verifier">
               <Button variant="secondary" size="lg">
                 Verify a Credential
@@ -92,7 +100,8 @@ export default function LandingPage() {
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
-              Wallet connected ✓
+              Wallet connected ✓ &nbsp;
+              <span className="text-text-muted font-mono text-xs">{wallet.address?.slice(0, 20)}...</span>
             </p>
           )}
         </div>
@@ -194,18 +203,10 @@ export default function LandingPage() {
                 </div>
                 <div className="border-t border-border pt-3 mt-3">
                   <div className="text-xs text-text-muted mb-2">Private information</div>
-                  {[
-                    "Name",
-                    "Student ID",
-                    "Exact GPA",
-                    "Date of Birth",
-                    "Full Credential",
-                  ].map((field) => (
+                  {["Name", "Student ID", "Exact GPA", "Date of Birth", "Full Credential"].map((field) => (
                     <div key={field} className="flex items-center justify-between py-1">
                       <span className="text-xs text-text-muted">{field}</span>
-                      <span className="text-xs text-text-muted flex items-center gap-1">
-                        🔒 Hidden
-                      </span>
+                      <span className="text-xs text-text-muted">🔒 Hidden</span>
                     </div>
                   ))}
                 </div>
