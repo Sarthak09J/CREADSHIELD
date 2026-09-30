@@ -14,7 +14,7 @@
 | | |
 |---|---|
 | **GitHub Repository** | https://github.com/Sarthak09J/CREADSHIELD |
-| **Live Demo** | Run locally: `cd app && npm run dev` → http://localhost:3000 |
+| **Live Demo** | https://creadshield.vercel.app |
 | **CI/CD Workflow** | [.github/workflows/ci.yml](.github/workflows/ci.yml) |
 
 ---
@@ -299,6 +299,7 @@ Copy `.env.example` to `.env.local`:
 |---|---|
 | ✅ Public GitHub repository | https://github.com/Sarthak09J/CREADSHIELD |
 | ✅ Complete README | This document |
+| ✅ Live demo | https://creadshield.vercel.app |
 | ✅ Approved idea: Confidential Credentials | See Product Proposal section |
 | ✅ Fully functional dApp | 6 pages, complete user flows |
 | ✅ Meaningful Midnight privacy model | Witnesses, disclose(), ZK circuits |
