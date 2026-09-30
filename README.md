@@ -321,3 +321,6 @@ Apache 2.0
 
 *Built for the Midnight Hackathon · Confidential Credentials track*
 *Powered by Midnight zero-knowledge proofs*
+
+<img width="1870" height="987" alt="image" src="https://github.com/user-attachments/assets/2c4f63fb-85f5-43f4-aaa7-53d7bdc3c034" />
+
